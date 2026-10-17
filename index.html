@@ -173,14 +173,32 @@ const PLAN = {
   ],
 };
 
-function seed(){
-  const exercises = LIB.map(([name,cat,c]) => ({id:uid(), name, cat, rest: c?150:90}));
-  const byName = n => exercises.find(e => e.name === n).id;
-  const templates = Object.entries(PLAN).map(([name, items]) => ({
-    id: uid(), name,
-    items: items.map(([ex,sets,reps,rir,group,note]) => ({exId:byName(ex), sets, reps, rir, group, note}))
+// Built-in exercises and plan templates get fixed ids, so every device agrees on them when syncing
+const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const exIdFor = name => 'x-' + slug(name);
+const tplIdFor = name => 't-' + slug(name);
+function planTemplates(){
+  return Object.entries(PLAN).map(([name, items]) => ({
+    id: tplIdFor(name), name,
+    items: items.map(([ex,sets,reps,rir,group,note]) => ({exId:exIdFor(ex), sets, reps, rir, group, note}))
   }));
-  return {version:1, exercises, templates, workouts:[], active:null, settings:{unit:'kg', sound:true}};
+}
+function seed(){
+  const exercises = LIB.map(([name,cat,c]) => ({id:exIdFor(name), name, cat, rest: c?150:90}));
+  return {version:1, exercises, templates: planTemplates(), workouts:[], deleted:[], metaUpdated:0, active:null, settings:{unit:'kg', sound:true}};
+}
+// Older saves used random ids for built-in exercises/templates: switch them to the fixed ids
+function migrate(){
+  S.deleted = S.deleted || [];
+  if(S.metaUpdated == null) S.metaUpdated = 0;
+  S.workouts = S.workouts || [];
+  const map = {};
+  S.exercises.forEach(e => { if(LIB.some(l => l[0] === e.name)){ const nid = exIdFor(e.name); if(e.id !== nid){ map[e.id] = nid; e.id = nid; } } });
+  const seen = new Set(); S.exercises = S.exercises.filter(e => !seen.has(e.id) && seen.add(e.id));
+  const fix = it => { if(map[it.exId]) it.exId = map[it.exId]; };
+  S.templates.forEach(t => { t.items.forEach(fix); if(PLAN[t.name] && !S.templates.some(o => o !== t && o.id === tplIdFor(t.name))) t.id = tplIdFor(t.name); });
+  S.workouts.forEach(w => { w.exercises.forEach(fix); const t = S.templates.find(x => x.name === w.name); if(w.templateId && t && PLAN[w.name]) w.templateId = t.id; });
+  if(S.active) S.active.exercises.forEach(fix);
 }
 
 let S;
@@ -191,12 +209,105 @@ function load(){
     S = raw ? JSON.parse(raw) : seed();
   }catch(e){ storageOK = false; S = seed(); }
   if(!S.settings) S.settings = {unit:'kg', sound:true};
+  migrate();
+  lastMeta = metaSig(S);
 }
-function save(){
+// Templates, exercises and settings sync as one block: the most recently edited side wins
+const metaSig = o => JSON.stringify([o.exercises, o.templates, o.settings]);
+let lastMeta = '';
+function save(fromSync){
+  const m = metaSig(S);
+  if(m !== lastMeta){ if(!fromSync) S.metaUpdated = Date.now(); lastMeta = m; }
   try{ localStorage.setItem(KEY, JSON.stringify(S)); storageOK = true; }
   catch(e){ storageOK = false; }
+  if(!fromSync && !S.active) scheduleSync();
 }
-load(); save();
+
+/* ============ GitHub sync ============ */
+const SKEY = 'gymlog.sync';
+let SY = {};
+try{ SY = JSON.parse(localStorage.getItem(SKEY) || '{}'); }catch(e){}
+const saveSY = () => { try{ localStorage.setItem(SKEY, JSON.stringify(SY)); }catch(e){} };
+const syncOn = () => !!(SY.repo && SY.token);
+let syncing = false, syncAgain = false, syncT = null;
+function scheduleSync(ms = 2500){ if(!syncOn()) return; clearTimeout(syncT); syncT = setTimeout(syncNow, ms); }
+function b64enc(str){ const b = new TextEncoder().encode(str); let s = ''; for(let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); }
+function b64dec(b64){ return new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, '')), c => c.charCodeAt(0))); }
+function gh(method, body, raw){
+  const path = (SY.path || 'data/gym-log.json').split('/').map(encodeURIComponent).join('/');
+  return fetch(`https://api.github.com/repos/${SY.repo}/contents/${path}`, {
+    method, cache: 'no-store',
+    headers: {Authorization: `Bearer ${SY.token}`, Accept: raw ? 'application/vnd.github.raw+json' : 'application/vnd.github+json', ...(body ? {'Content-Type':'application/json'} : {})},
+    body: body ? JSON.stringify(body) : undefined
+  });
+}
+async function ghError(r){
+  if(r.status === 401) return 'GitHub rejected the token (wrong or expired).';
+  if(r.status === 403) return "The token isn't allowed to write to this repo (needs Contents: Read and write).";
+  if(r.status === 404) return "Repo not found, or the token doesn't have access to it.";
+  let m = ''; try{ m = (await r.json()).message; }catch(e){}
+  return `GitHub error ${r.status}${m ? ': ' + m : ''}`;
+}
+function mergeData(L, R){
+  const deleted = [...new Set([...(L.deleted||[]), ...(R.deleted||[])])];
+  const ws = new Map();
+  [...(R.workouts||[]), ...(L.workouts||[])].forEach(w => { if(!ws.has(w.id)) ws.set(w.id, w); });
+  const workouts = [...ws.values()].filter(w => !deleted.includes(w.id)).sort((a,b) => a.start - b.start);
+  const newer = (R.metaUpdated||0) > (L.metaUpdated||0) ? R : L, older = newer === R ? L : R;
+  const ex = new Map();
+  [...(newer.exercises||[]), ...(older.exercises||[])].forEach(e => { if(!ex.has(e.id)) ex.set(e.id, e); });
+  return {...L, version:1, workouts, deleted, exercises:[...ex.values()], templates:newer.templates || L.templates,
+    settings:newer.settings || L.settings, metaUpdated:Math.max(L.metaUpdated||0, R.metaUpdated||0), active:L.active};
+}
+const dataSig = o => JSON.stringify([(o.workouts||[]).map(w => w.id).sort(), (o.deleted||[]).slice().sort(), o.metaUpdated||0, o.exercises, o.templates, o.settings]);
+async function syncNow(){
+  if(!syncOn()) return;
+  if(syncing){ syncAgain = true; return; }
+  syncing = true; SY.state = 'busy'; drawSync();
+  try{
+    for(let attempt = 0; ; attempt++){
+      let remote = null, sha;
+      const r = await gh('GET');
+      if(r.ok){
+        const j = await r.json(); sha = j.sha;
+        const txt = j.content ? b64dec(j.content) : await (await gh('GET', null, true)).text();
+        remote = JSON.parse(txt);
+      } else if(r.status !== 404) throw new Error(await ghError(r));
+      if(remote){
+        const before = dataSig(S);
+        S = mergeData(S, remote); migrate(); save(true);
+        if(dataSig(S) !== before) refreshView();
+        if(dataSig(remote) === dataSig(S)) break; // already up to date
+      }
+      const p = await gh('PUT', {message: `Sync from ${navigator.platform || 'device'} ${new Date().toISOString().slice(0,16)}`,
+        content: b64enc(JSON.stringify({...S, active:null})), ...(sha ? {sha} : {})});
+      if(p.ok) break;
+      if((p.status === 409 || p.status === 422) && attempt < 3) continue; // another device saved first: merge again
+      throw new Error(await ghError(p));
+    }
+    SY.last = Date.now(); SY.err = ''; SY.state = 'ok';
+  }catch(e){
+    SY.err = (e && e.message && !/fetch/i.test(e.message)) ? e.message : "Couldn't reach GitHub (offline?). Will retry.";
+    SY.state = 'err';
+  }
+  saveSY(); syncing = false; drawSync();
+  if(syncAgain){ syncAgain = false; scheduleSync(500); }
+}
+function syncLabel(){
+  if(!syncOn()) return '';
+  if(SY.state === 'busy') return '☁︎ Syncing…';
+  if(SY.err) return '⚠️ ' + SY.err;
+  if(SY.last){ const m = Math.round((Date.now() - SY.last)/60000); return `☁︎ Synced ${m < 1 ? 'just now' : m < 60 ? m + ' min ago' : new Date(SY.last).toLocaleString()}`; }
+  return '☁︎ Not synced yet';
+}
+function drawSync(){ document.querySelectorAll('[data-sync-status]').forEach(el => { el.textContent = syncLabel(); el.style.color = SY.err ? 'var(--bad)' : ''; }); }
+function refreshView(){
+  const a = document.activeElement;
+  if(a && a.matches && a.matches('input,textarea,select')) return; // don't disturb typing
+  if(typeof render === 'function' && document.getElementById('app')) render();
+}
+
+load(); save(true);
 
 /* ============ Helpers ============ */
 const $ = s => document.querySelector(s);
@@ -269,6 +380,7 @@ function render(){
   else if(v === 'settings') html = viewSettings();
   $('#app').innerHTML = (storageOK ? '' : `<div class="card" style="border-color:var(--bad)">⚠️ This browser is blocking local storage, so workouts won't be kept. Open the file in Safari or Chrome, or use Export often.</div>`) + html;
   if(v === 'workout' && S.active) tickClock();
+  drawSync();
 }
 
 /* ============ Start screen ============ */
@@ -281,7 +393,7 @@ function viewStart(){
     if(i >= 0) next = S.templates[(i + 1) % S.templates.length];
   }
   return `
-  <header class="top"><h1>Start workout</h1></header>
+  <header class="top"><h1>Start workout</h1><span class="small muted" data-sync-status>${esc(syncLabel())}</span></header>
   ${last ? `<p class="muted small">Last: <b>${esc(last.name)}</b>, ${fmtDate(last.start)}${next ? ` · Next up: <b>${esc(next.name)}</b>` : ''}</p>` : `<p class="muted small">Pick a workout below. Your plan's 5 sessions are already loaded.</p>`}
   <div class="tpl-grid">
     ${S.templates.map(t => `
@@ -452,7 +564,7 @@ function finishWorkout(){
   w.end = Date.now();
   w.prs = prs;
   if(w.exercises.length) S.workouts.push(w);
-  S.active = null; stopRest(); save();
+  S.active = null; stopRest(); save(); scheduleSync(300);
   if(w.exercises.length){
     modal(`<h2 style="margin-top:0">Workout done 💪</h2>
       <p>${esc(w.name)} · ${fmtDur(w.end - w.start)} · ${w.exercises.reduce((a,e)=>a+e.sets.filter(s=>s.type!=='w').length,0)} working sets</p>
@@ -580,8 +692,21 @@ function viewSettings(){
   const n = done().length;
   return `<h1>Settings</h1>
   <div class="card">
+    <h2 style="margin-top:0">Sync with GitHub</h2>
+    <p class="small muted">Saves your log as a JSON file (data/gym-log.json) in your GitHub repo, so your phone and Mac share the same data. Set this up once on each device with the same token. In a public repo anyone can read this file.</p>
+    <label class="small muted">Repo (owner/name)</label>
+    <input class="txt" id="sy-repo" value="${esc(SY.repo || 'marcin-sieradzki-g/gym-log')}" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <label class="small muted">Token (fine-grained, Contents: Read and write on that repo only)</label>
+    <input class="txt" id="sy-token" type="password" placeholder="${SY.token ? 'Saved. Paste a new one to replace it' : 'github_pat_…'}" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="row wrap" style="margin-top:10px">
+      <button class="btn primary" data-act="sy-save">${syncOn() ? 'Save' : 'Connect'}</button>
+      ${syncOn() ? `<button class="btn" data-act="sy-now">Sync now</button><button class="btn danger" data-act="sy-off">Disconnect</button>` : ''}
+    </div>
+    <div class="small" data-sync-status style="margin-top:8px">${esc(syncLabel())}</div>
+  </div>
+  <div class="card">
     <h2 style="margin-top:0">Backup</h2>
-    <p class="small muted">Your data lives only in this browser on this Mac (${n} workouts). Export a backup now and then, e.g. into the Gym Coach folder. Clearing the browser's website data would erase it.</p>
+    <p class="small muted">${n} workouts on this device. ${syncOn() ? 'GitHub sync keeps a copy online; a manual export is an extra safety net.' : "Without sync, your data lives only in this browser. Export a backup now and then; clearing the browser's website data would erase it."}</p>
     <div class="row wrap"><button class="btn primary" data-act="export">Export backup (.json)</button>
     <label class="btn">Import backup<input type="file" accept=".json,application/json" data-import hidden></label>
     <button class="btn" data-act="export-csv">Export sets (.csv)</button></div>
@@ -692,7 +817,7 @@ document.addEventListener('click', e => {
     case 'back-history': go('history'); break;
     case 'back-ex': go('exercises'); break;
     case 'back-start': go('workout'); break;
-    case 'del-session': if(confirm('Delete this workout from history?')){ S.workouts = S.workouts.filter(w => w.id !== t.dataset.id); save(); go('history'); } break;
+    case 'del-session': if(confirm('Delete this workout from history?')){ S.workouts = S.workouts.filter(w => w.id !== t.dataset.id); S.deleted.push(t.dataset.id); save(); go('history'); } break;
     case 'new-ex': editExerciseModal(null); break;
     case 'edit-ex': editExerciseModal(t.dataset.id); break;
     case 'm-save-ex': {
@@ -719,9 +844,18 @@ document.addEventListener('click', e => {
       const fresh = seed();
       // keep existing exercise ids where names match
       fresh.exercises.forEach(fe => { if(!S.exercises.some(e => e.name === fe.name)) S.exercises.push(fe); });
-      S.templates = Object.entries(PLAN).map(([name, items]) => ({id:uid(), name, items: items.map(([ex,sets,reps,rir,group,note]) => ({exId: S.exercises.find(e => e.name === ex).id, sets, reps, rir, group, note}))}));
+      S.templates = planTemplates();
       save(); go('workout'); } break;
-    case 'wipe': if(confirm('Erase ALL workouts, templates and exercises? Export a backup first if unsure.') && confirm('Really erase everything?')){ S = seed(); save(); go('workout'); } break;
+    case 'sy-save': {
+      const repo = $('#sy-repo').value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$|\/$/g, '');
+      const token = $('#sy-token').value.trim();
+      if(!/^[\w.-]+\/[\w.-]+$/.test(repo)){ alert('Repo should look like owner/name, e.g. marcin-sieradzki-g/gym-log'); return; }
+      if(!token && !SY.token){ alert('Paste your GitHub token first.'); return; }
+      SY.repo = repo; if(token) SY.token = token; SY.err = ''; SY.path = SY.path || 'data/gym-log.json'; saveSY(); render(); syncNow(); break;
+    }
+    case 'sy-now': syncNow(); break;
+    case 'sy-off': if(confirm('Stop syncing on this device? Your data stays here and on GitHub.')){ SY = {}; saveSY(); render(); } break;
+    case 'wipe': if(confirm('Erase ALL workouts, templates and exercises on this device? Export a backup first if unsure.' + (syncOn() ? ' (Your GitHub copy is kept; the next sync brings it back.)' : '')) && confirm('Really erase everything?')){ S = seed(); save(true); go('workout'); } break;
   }
 });
 
@@ -743,7 +877,7 @@ document.addEventListener('change', e => {
   if(t.hasAttribute('data-import') && t.files[0]){
     const fr = new FileReader();
     fr.onload = () => { try{ const d = JSON.parse(fr.result); if(!d.exercises || !d.workouts) throw 0;
-        if(confirm(`Import backup with ${d.workouts.length} workouts? This replaces what's in the app now.`)){ S = d; save(); go('history'); } }
+        if(confirm(`Import backup with ${d.workouts.length} workouts? This replaces what's in the app now.`)){ S = d; migrate(); save(); scheduleSync(300); go('history'); } }
       catch(err){ alert("That file doesn't look like a Gym Log backup."); } };
     fr.readAsText(t.files[0]);
   }
@@ -757,6 +891,9 @@ document.addEventListener('keydown', e => {
 window.addEventListener('storage', ev => { if(ev.key === KEY){ load(); render(); } });
 
 render();
+if(syncOn()) syncNow();
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible' && syncOn() && Date.now() - (SY.last||0) > 30000) syncNow(); });
+window.addEventListener('online', () => scheduleSync(500));
 
 // Phone/hosted extras: offline cache + ask the browser not to wipe our data
 if(location.protocol.startsWith('http')){

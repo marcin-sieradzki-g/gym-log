@@ -113,14 +113,14 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 
 // [name, category, isCompound]
 const LIB = [
-  ['Bench Press (Barbell)','Chest',1],['Bench Press (Dumbbell)','Chest',1],['Incline Dumbbell Press','Chest',1],
+  ['Bench Press (Barbell)','Chest',1],['Bench Press (Dumbbell)','Chest',1],['Incline Dumbbell Press','Chest',1],['Incline Bench Press (Barbell)','Chest',1],['Chest Fly','Chest',0],
   ['Machine Chest Press','Chest',1],['Dips','Chest',1],
   ['Pull-up','Back',1],['Lat Pulldown','Back',1],['Chest-Supported Row','Back',1],['Cable Row','Back',1],
   ['T-Bar Row','Back',1],['Single-Arm Cable Pulldown','Back',0],
   ['Seated Dumbbell Shoulder Press','Shoulders',1],['Machine Shoulder Press','Shoulders',1],
-  ['Cable Lateral Raise','Shoulders',0],['Reverse Pec Deck','Shoulders',0],['Face Pull','Shoulders',0],
-  ['Incline Dumbbell Curl','Biceps',0],['Bayesian Cable Curl','Biceps',0],['EZ-Bar Curl','Biceps',0],['Hammer Curl','Biceps',0],
-  ['Overhead Cable Triceps Extension','Triceps',0],['Rope Pushdown','Triceps',0],['Close-Grip Bench Press','Triceps',1],
+  ['Cable Lateral Raise','Shoulders',0],['Dumbbell Lateral Raise','Shoulders',0],['Reverse Pec Deck','Shoulders',0],['Face Pull','Shoulders',0],
+  ['Incline Dumbbell Curl','Biceps',0],['Bayesian Cable Curl','Biceps',0],['EZ-Bar Curl','Biceps',0],['Hammer Curl','Biceps',0],['Cable Curl','Biceps',0],['Cable Hammer Curl','Biceps',0],
+  ['Overhead Cable Triceps Extension','Triceps',0],['Rope Pushdown','Triceps',0],['Straight-Bar Pushdown','Triceps',0],['Close-Grip Bench Press','Triceps',1],
   ['Overhead Dumbbell Extension','Triceps',0],
   ['Back Squat','Legs',1],['Hack Squat','Legs',1],['Leg Press','Legs',1],['Romanian Deadlift','Legs',1],
   ['Bulgarian Split Squat','Legs',1],['Leg Extension','Legs',0],['Seated Leg Curl','Legs',0],['Lying Leg Curl','Legs',0],
@@ -130,12 +130,12 @@ const LIB = [
 // [exercise, sets, reps, rir, superset group, note]
 const PLAN = {
   'Upper A': [
-    ['Bench Press (Barbell)',3,'5-8','1-2','','Or dumbbell (swap)'],
-    ['Pull-up',3,'6-10','1','','Weighted if able, or lat pulldown. Log added kg.'],
-    ['Incline Dumbbell Press',2,'8-12','1','',''],
-    ['Chest-Supported Row',2,'8-12','1','',''],
+    ['Bench Press (Barbell)',3,'5-8','1-2','',''],
+    ['Lat Pulldown',3,'6-10','1','','Or pull-up (swap)'],
+    ['Cable Row',3,'8-12','1','','Seated'],
+    ['Chest Fly',2,'10-15','0','','Machine or cable'],
     ['Incline Dumbbell Curl',3,'8-12','0-1','A',''],
-    ['Overhead Cable Triceps Extension',3,'8-12','0-1','A',''],
+    ['Overhead Dumbbell Extension',3,'8-12','0-1','A',''],
     ['Cable Lateral Raise',2,'12-20','0','',''],
   ],
   'Lower A': [
@@ -147,12 +147,12 @@ const PLAN = {
     ['Cable Crunch',2,'10-15','','','Or machine crunch'],
   ],
   'Upper B': [
-    ['Seated Dumbbell Shoulder Press',3,'6-10','1','','Or machine (swap)'],
-    ['Cable Row',3,'8-12','1','','Or T-bar row (swap)'],
-    ['Machine Chest Press',2,'8-12','0-1','','Or dips (swap)'],
-    ['Single-Arm Cable Pulldown',2,'10-15','0','',''],
+    ['Incline Bench Press (Barbell)',3,'6-10','1-2','',''],
+    ['Chest-Supported Row',3,'8-12','1','','Incline dumbbell row'],
+    ['Single-Arm Cable Pulldown',2,'10-15','0','','Or close-grip pulldown'],
     ['Bayesian Cable Curl',3,'10-15','0-1','A','Arm behind you'],
-    ['Rope Pushdown',3,'10-15','0-1','A',''],
+    ['Straight-Bar Pushdown',3,'10-15','0-1','A',''],
+    ['Dumbbell Lateral Raise',2,'12-20','0','','Or Y-raise'],
     ['Reverse Pec Deck',2,'12-20','0','',''],
   ],
   'Lower B': [
@@ -164,18 +164,18 @@ const PLAN = {
     ['Hanging Leg Raise',2,'10-15','','',''],
   ],
   'Arms': [
-    ['EZ-Bar Curl',3,'6-10','1','A',''],
+    ['Cable Curl',3,'6-10','1','A',''],
     ['Close-Grip Bench Press',3,'6-10','1','A','Or dips (swap)'],
-    ['Hammer Curl',2,'10-15','0','B',''],
-    ['Overhead Dumbbell Extension',2,'10-15','0','B','Or cable'],
+    ['Cable Hammer Curl',2,'10-15','0','B','Rope'],
+    ['Overhead Cable Triceps Extension',2,'10-15','0','B',''],
     ['Cable Lateral Raise',3,'12-20','0','',''],
-    ['Reverse Pec Deck',2,'15-20','0','','Or face pull (swap)'],
+    ['Face Pull',2,'15-20','0','','Or reverse pec deck'],
   ],
 };
 
 // Built-in exercises and plan templates get fixed ids, so every device agrees on them when syncing
 // Bump when the plan's exercise order changes; saved templates are updated once (history untouched)
-const PLAN_V = 4;
+const PLAN_V = 5;
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const exIdFor = name => 'x-' + slug(name);
 const tplIdFor = name => 't-' + slug(name);
@@ -201,22 +201,17 @@ function migrate(){
   S.templates.forEach(t => { t.items.forEach(fix); if(PLAN[t.name] && !S.templates.some(o => o !== t && o.id === tplIdFor(t.name))) t.id = tplIdFor(t.name); });
   S.workouts.forEach(w => { w.exercises.forEach(fix); const t = S.templates.find(x => x.name === w.name); if(w.templateId && t && PLAN[w.name]) w.templateId = t.id; });
   if(S.active) S.active.exercises.forEach(fix);
-  // v2/v3 (2026-10-18): Upper A/B reordered (arms after the compounds, before small shoulder work)
+  // New built-in exercises appear in older saves too
+  LIB.forEach(([name, cat, c]) => { if(!S.exercises.some(e => e.id === exIdFor(name))) S.exercises.push({id:exIdFor(name), name, cat, rest: c?150:90}); });
+  // When the plan changes, saved copies of the changed templates are replaced once (history untouched)
+  const CHANGED = {2:['t-upper-a','t-upper-b'], 3:['t-upper-a','t-upper-b'], 4:['t-lower-a','t-lower-b'], 5:['t-upper-a','t-upper-b','t-arms']};
   S.templates.forEach(t => {
-    if((t.planV || 1) >= PLAN_V) return;
-    // v4 (2026-10-18): leg days rebuilt (leg press / Bulgarian split squat as main lifts, no squat or hip thrust)
+    const from = t.planV || 1;
+    if(from >= PLAN_V) return;
     const planName = Object.keys(PLAN).find(k => tplIdFor(k) === t.id);
-    if((t.planV || 1) < 4 && ['t-lower-a', 't-lower-b'].includes(t.id) && planName){
+    const changed = Object.entries(CHANGED).some(([v, ids]) => +v > from && ids.includes(t.id));
+    if(planName && changed){
       t.items = PLAN[planName].map(([ex,sets,reps,rir,group,note]) => ({exId:exIdFor(ex), sets, reps, rir, group, note}));
-      t.planV = PLAN_V; S.metaUpdated = Date.now(); return;
-    }
-    if(!['t-upper-a', 't-upper-b'].includes(t.id)){ t.planV = PLAN_V; return; }
-    const plan = PLAN[t.name] || PLAN[Object.keys(PLAN).find(k => tplIdFor(k) === t.id)];
-    if(plan){
-      const order = plan.map(r => exIdFor(r[0]));
-      const pos = it => { const i = order.indexOf(it.exId); return i < 0 ? 999 : i; };
-      t.items = t.items.map((it, i) => ({it, i})).sort((a, b) => (pos(a.it) - pos(b.it)) || (a.i - b.i)).map(x => x.it);
-      t.items.forEach(it => { const row = plan.find(r => exIdFor(r[0]) === it.exId); if(row){ it.group = row[4]; it.note = row[5]; } });
       S.metaUpdated = Date.now();
     }
     t.planV = PLAN_V;

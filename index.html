@@ -133,10 +133,10 @@ const PLAN = {
     ['Bench Press (Barbell)',3,'5-8','1-2','','Or dumbbell (swap)'],
     ['Pull-up',3,'6-10','1','','Weighted if able, or lat pulldown. Log added kg.'],
     ['Incline Dumbbell Press',2,'8-12','1','',''],
-    ['Chest-Supported Row',2,'8-12','1','A',''],
-    ['Cable Lateral Raise',2,'12-20','0','A',''],
-    ['Incline Dumbbell Curl',3,'8-12','0-1','B','Arms last'],
-    ['Overhead Cable Triceps Extension',3,'8-12','0-1','B','Arms last'],
+    ['Chest-Supported Row',2,'8-12','1','',''],
+    ['Incline Dumbbell Curl',3,'8-12','0-1','A',''],
+    ['Overhead Cable Triceps Extension',3,'8-12','0-1','A',''],
+    ['Cable Lateral Raise',2,'12-20','0','',''],
   ],
   'Lower A': [
     ['Back Squat',3,'5-8','2','','Or hack squat (swap)'],
@@ -150,10 +150,10 @@ const PLAN = {
     ['Seated Dumbbell Shoulder Press',3,'6-10','1','','Or machine (swap)'],
     ['Cable Row',3,'8-12','1','','Or T-bar row (swap)'],
     ['Machine Chest Press',2,'8-12','0-1','','Or dips (swap)'],
-    ['Single-Arm Cable Pulldown',2,'10-15','0','A',''],
-    ['Reverse Pec Deck',2,'12-20','0','A',''],
-    ['Bayesian Cable Curl',3,'10-15','0-1','B','Arm behind you. Arms last'],
-    ['Rope Pushdown',3,'10-15','0-1','B','Arms last'],
+    ['Single-Arm Cable Pulldown',2,'10-15','0','',''],
+    ['Bayesian Cable Curl',3,'10-15','0-1','A','Arm behind you'],
+    ['Rope Pushdown',3,'10-15','0-1','A',''],
+    ['Reverse Pec Deck',2,'12-20','0','',''],
   ],
   'Lower B': [
     ['Leg Press',3,'8-12','1','','Or hack squat (swap)'],
@@ -175,7 +175,7 @@ const PLAN = {
 
 // Built-in exercises and plan templates get fixed ids, so every device agrees on them when syncing
 // Bump when the plan's exercise order changes; saved templates are updated once (history untouched)
-const PLAN_V = 2;
+const PLAN_V = 3;
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const exIdFor = name => 'x-' + slug(name);
 const tplIdFor = name => 't-' + slug(name);
@@ -201,9 +201,10 @@ function migrate(){
   S.templates.forEach(t => { t.items.forEach(fix); if(PLAN[t.name] && !S.templates.some(o => o !== t && o.id === tplIdFor(t.name))) t.id = tplIdFor(t.name); });
   S.workouts.forEach(w => { w.exercises.forEach(fix); const t = S.templates.find(x => x.name === w.name); if(w.templateId && t && PLAN[w.name]) w.templateId = t.id; });
   if(S.active) S.active.exercises.forEach(fix);
-  // v2 (2026-10-18): arms moved to the end of Upper A and Upper B
+  // v2/v3 (2026-10-18): Upper A/B reordered (arms after the compounds, before small shoulder work)
   S.templates.forEach(t => {
     if((t.planV || 1) >= PLAN_V) return;
+    if(!['t-upper-a', 't-upper-b'].includes(t.id)){ t.planV = PLAN_V; return; }
     const plan = PLAN[t.name] || PLAN[Object.keys(PLAN).find(k => tplIdFor(k) === t.id)];
     if(plan){
       const order = plan.map(r => exIdFor(r[0]));

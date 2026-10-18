@@ -251,7 +251,8 @@ async function ghError(r){
 function mergeData(L, R){
   const deleted = [...new Set([...(L.deleted||[]), ...(R.deleted||[])])];
   const ws = new Map();
-  [...(R.workouts||[]), ...(L.workouts||[])].forEach(w => { if(!ws.has(w.id)) ws.set(w.id, w); });
+  const ver = w => w.updated || w.end || 0;
+  [...(R.workouts||[]), ...(L.workouts||[])].forEach(w => { const o = ws.get(w.id); if(!o || ver(w) > ver(o)) ws.set(w.id, w); });
   const workouts = [...ws.values()].filter(w => !deleted.includes(w.id)).sort((a,b) => a.start - b.start);
   const newer = (R.metaUpdated||0) > (L.metaUpdated||0) ? R : L, older = newer === R ? L : R;
   const ex = new Map();
@@ -259,7 +260,7 @@ function mergeData(L, R){
   return {...L, version:1, workouts, deleted, exercises:[...ex.values()], templates:newer.templates || L.templates,
     settings:newer.settings || L.settings, metaUpdated:Math.max(L.metaUpdated||0, R.metaUpdated||0), active:L.active};
 }
-const dataSig = o => JSON.stringify([(o.workouts||[]).map(w => w.id).sort(), (o.deleted||[]).slice().sort(), o.metaUpdated||0, o.exercises, o.templates, o.settings]);
+const dataSig = o => JSON.stringify([(o.workouts||[]).map(w => w.id + ':' + (w.updated || w.end || 0)).sort(), (o.deleted||[]).slice().sort(), o.metaUpdated||0, o.exercises, o.templates, o.settings]);
 async function syncNow(){
   if(!syncOn()) return;
   if(syncing){ syncAgain = true; return; }
@@ -455,7 +456,8 @@ function viewActive(){
   </header>
   ${w.exercises.map((we, i) => exCard(we, i)).join('')}
   <button class="btn block" data-act="add-ex" style="margin-bottom:10px">+ Add exercise</button>
-  <textarea data-wnotes rows="2" placeholder="Workout notes (sleep, energy, anything odd)">${esc(w.notes)}</textarea>
+  <label class="small muted" style="font-weight:600">Session comment</label>
+  <textarea data-wnotes rows="3" placeholder="Sick? Injury or pain? Bad sleep, low energy, short on time? Anything your coach should know.">${esc(w.notes)}</textarea>
   <button class="btn block danger" data-act="cancel" style="margin-top:12px">Discard workout</button>`;
 }
 function exCard(we, i){
@@ -569,7 +571,9 @@ function finishWorkout(){
     modal(`<h2 style="margin-top:0">Workout done 💪</h2>
       <p>${esc(w.name)} · ${fmtDur(w.end - w.start)} · ${w.exercises.reduce((a,e)=>a+e.sets.filter(s=>s.type!=='w').length,0)} working sets</p>
       ${prs.length ? `<h2>New records</h2>${prs.map(p => `<div><span class="badge pr">PR</span> ${esc(p)}</div>`).join('')}` : `<p class="muted">No new records this time. Consistency is what counts.</p>`}
-      <button class="btn primary block" data-act="close-modal" style="margin-top:14px">Nice</button>`);
+      <h2>Session comment</h2>
+      <textarea data-session-notes="${w.id}" rows="3" placeholder="Sick? Injury or pain? Bad sleep, low energy, short on time? Anything your coach should know.">${esc(w.notes)}</textarea>
+      <button class="btn primary block" data-act="close-modal" style="margin-top:14px">Done</button>`);
   }
   go('workout');
 }
@@ -590,6 +594,7 @@ function viewHistory(){
       <div class="row between"><b>${esc(w.name)}</b><span class="muted small">${fmtDate(w.start)} · ${fmtDur(w.end - w.start)}</span></div>
       ${w.exercises.map(e => { const ws_ = e.sets.filter(s=>s.type!=='w'); const best = ws_.reduce((b,s)=> e1rm(+s.w,+s.r) > e1rm(+b.w,+b.r) ? s : b, ws_[0]||{});
         return `<div class="hist-ex"><span class="muted">${ws_.length} ×</span> ${esc(exById(e.exId).name)} <span class="muted small">best ${fmtW(best.w)}${best.w!==''?' × ':''}${best.r??''}</span></div>`; }).join('')}
+      ${w.notes ? `<div class="small muted" style="margin-top:6px">💬 ${esc(w.notes.length > 90 ? w.notes.slice(0,90) + '…' : w.notes)}</div>`:''}
       ${(w.prs||[]).length ? `<div style="margin-top:6px"><span class="badge pr">${w.prs.length} PR${w.prs.length>1?'s':''}</span></div>`:''}
     </div>`;
   });
@@ -601,7 +606,8 @@ function viewSession(id){
   return `<header class="top"><button class="btn ghost" data-act="back-history">← History</button>
     <button class="btn danger" data-act="del-session" data-id="${w.id}">Delete</button></header>
   <h1>${esc(w.name)}</h1><p class="muted">${fmtDate(w.start)} · ${new Date(w.start).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · ${fmtDur(w.end - w.start)}</p>
-  ${w.notes ? `<div class="card">${esc(w.notes)}</div>`:''}
+  <div class="card"><label class="small muted" style="font-weight:600">Session comment</label>
+    <textarea data-session-notes="${w.id}" rows="3" placeholder="Sick? Injury or pain? Bad sleep, low energy, short on time? Anything your coach should know.">${esc(w.notes)}</textarea></div>
   ${(w.prs||[]).map(p => `<div><span class="badge pr">PR</span> ${esc(p)}</div>`).join('')}
   ${w.exercises.map(e => `<div class="card"><div class="ex-title" data-open-ex="${e.exId}" style="cursor:pointer">${esc(exById(e.exId).name)}</div>
     <table class="sets"><thead><tr><th>Set</th><th>${S.settings.unit}</th><th>Reps</th><th>RIR</th><th>e1RM</th></tr></thead><tbody>
@@ -864,6 +870,7 @@ document.addEventListener('input', e => {
   if(t.dataset.f){ const row = t.closest('tr[data-ex]'); S.active.exercises[+row.dataset.ex].sets[+row.dataset.set][t.dataset.f] = t.value.replace(',', '.'); save(); }
   else if(t.hasAttribute('data-wname')){ S.active.name = t.value; save(); }
   else if(t.hasAttribute('data-wnotes')){ S.active.notes = t.value; save(); }
+  else if(t.dataset.sessionNotes){ const w = S.workouts.find(x => x.id === t.dataset.sessionNotes); if(w){ w.notes = t.value; w.updated = Date.now(); save(); } }
   else if(t.hasAttribute('data-tplname')){ S.templates.find(x => x.id === view.id).name = t.value; save(); }
   else if(t.dataset.tf){ const tp = S.templates.find(x => x.id === view.id); const it = tp.items[+t.closest('[data-ti]').dataset.ti];
     it[t.dataset.tf] = t.dataset.tf === 'sets' ? (parseInt(t.value) || 1) : (t.dataset.tf === 'group' ? t.value.toUpperCase() : t.value); save(); }

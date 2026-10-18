@@ -158,7 +158,7 @@ const PLAN = {
   'Lower B': [
     ['Bulgarian Split Squat',3,'6-10','1','','Main lift. Short stride, upright torso. Log per-hand dumbbell weight'],
     ['Hack Squat',3,'8-12','1','',''],
-    ['Lying Leg Curl',3,'10-15','0','',''],
+    ['Seated Leg Curl',3,'10-15','0','','Lying if the machine is taken'],
     ['Leg Extension',2,'12-15','0','',''],
     ['Seated Calf Raise',3,'12-20','0','',''],
     ['Hanging Leg Raise',2,'10-15','','',''],
@@ -175,7 +175,7 @@ const PLAN = {
 
 // Built-in exercises and plan templates get fixed ids, so every device agrees on them when syncing
 // Bump when the plan's exercise order changes; saved templates are updated once (history untouched)
-const PLAN_V = 5;
+const PLAN_V = 6;
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const exIdFor = name => 'x-' + slug(name);
 const tplIdFor = name => 't-' + slug(name);
@@ -210,6 +210,8 @@ function migrate(){
     if(from >= PLAN_V) return;
     const planName = Object.keys(PLAN).find(k => tplIdFor(k) === t.id);
     const changed = Object.entries(CHANGED).some(([v, ids]) => +v > from && ids.includes(t.id));
+    // v6: single exercise swap, keeps the rest of the template (and any edits) as is
+    if(from < 6 && !changed && t.id === 't-lower-b') t.items.forEach(it => { if(it.exId === exIdFor('Lying Leg Curl')){ it.exId = exIdFor('Seated Leg Curl'); S.metaUpdated = Date.now(); } });
     if(planName && changed){
       t.items = PLAN[planName].map(([ex,sets,reps,rir,group,note]) => ({exId:exIdFor(ex), sets, reps, rir, group, note}));
       S.metaUpdated = Date.now();

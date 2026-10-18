@@ -139,12 +139,12 @@ const PLAN = {
     ['Cable Lateral Raise',2,'12-20','0','',''],
   ],
   'Lower A': [
-    ['Back Squat',3,'5-8','2','','Or hack squat (swap)'],
-    ['Romanian Deadlift',3,'6-10','2','',''],
-    ['Leg Extension',2,'10-15','0','',''],
-    ['Seated Leg Curl',2,'10-15','0','',''],
+    ['Leg Press',3,'6-10','1','','Main lift'],
+    ['Romanian Deadlift',3,'6-10','2','','Or stiff-leg deadlift'],
+    ['Seated Leg Curl',3,'10-15','0','',''],
+    ['Leg Extension',3,'10-15','0','',''],
     ['Standing Calf Raise',3,'8-12','0','','Pause in the stretch'],
-    ['Cable Crunch',2,'10-15','','',''],
+    ['Cable Crunch',2,'10-15','','','Or machine crunch'],
   ],
   'Upper B': [
     ['Seated Dumbbell Shoulder Press',3,'6-10','1','','Or machine (swap)'],
@@ -156,10 +156,10 @@ const PLAN = {
     ['Reverse Pec Deck',2,'12-20','0','',''],
   ],
   'Lower B': [
-    ['Leg Press',3,'8-12','1','','Or hack squat (swap)'],
-    ['Bulgarian Split Squat',2,'8-12','1','','Log per-hand dumbbell weight'],
+    ['Bulgarian Split Squat',3,'6-10','1','','Main lift. Short stride, upright torso. Log per-hand dumbbell weight'],
+    ['Hack Squat',3,'8-12','1','',''],
     ['Lying Leg Curl',3,'10-15','0','',''],
-    ['Hip Thrust',2,'10-15','1','','Or 45° back extension (swap)'],
+    ['Leg Extension',2,'12-15','0','',''],
     ['Seated Calf Raise',3,'12-20','0','',''],
     ['Hanging Leg Raise',2,'10-15','','',''],
   ],
@@ -175,7 +175,7 @@ const PLAN = {
 
 // Built-in exercises and plan templates get fixed ids, so every device agrees on them when syncing
 // Bump when the plan's exercise order changes; saved templates are updated once (history untouched)
-const PLAN_V = 3;
+const PLAN_V = 4;
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const exIdFor = name => 'x-' + slug(name);
 const tplIdFor = name => 't-' + slug(name);
@@ -204,6 +204,12 @@ function migrate(){
   // v2/v3 (2026-10-18): Upper A/B reordered (arms after the compounds, before small shoulder work)
   S.templates.forEach(t => {
     if((t.planV || 1) >= PLAN_V) return;
+    // v4 (2026-10-18): leg days rebuilt (leg press / Bulgarian split squat as main lifts, no squat or hip thrust)
+    const planName = Object.keys(PLAN).find(k => tplIdFor(k) === t.id);
+    if((t.planV || 1) < 4 && ['t-lower-a', 't-lower-b'].includes(t.id) && planName){
+      t.items = PLAN[planName].map(([ex,sets,reps,rir,group,note]) => ({exId:exIdFor(ex), sets, reps, rir, group, note}));
+      t.planV = PLAN_V; S.metaUpdated = Date.now(); return;
+    }
     if(!['t-upper-a', 't-upper-b'].includes(t.id)){ t.planV = PLAN_V; return; }
     const plan = PLAN[t.name] || PLAN[Object.keys(PLAN).find(k => tplIdFor(k) === t.id)];
     if(plan){

@@ -508,7 +508,7 @@ function exCard(we, i){
         ${we.group ? ` <span class="badge ss">Superset ${esc(we.group)}</span>`:''}
       </div>
       <div class="pill">
-        <button class="btn ghost small" data-act="move-up" data-ex="${i}" title="Move up">↑</button>
+        <button class="btn ghost small" data-act="reorder" title="Change exercise order">Move</button>
         <button class="btn ghost small" data-act="swap" data-ex="${i}">Swap</button>
         <button class="btn ghost small danger" data-act="del-ex" data-ex="${i}">Remove</button>
       </div>
@@ -770,6 +770,21 @@ const today = () => new Date().toISOString().slice(0,10);
 
 /* ============ Modals ============ */
 function modal(html){ $('#modal-slot').innerHTML = `<div class="modal-bg" data-act="close-modal-bg"><div class="modal">${html}</div></div>`; }
+// Change the order of exercises during a workout
+function reorderModal(){
+  const X = S.active.exercises, upNext = X.findIndex(e => !e.sets.some(s => s.done));
+  modal(`<div class="row between"><h2 style="margin:0">Exercise order</h2><button class="btn primary" data-act="close-modal">Done</button></div>
+    <p class="small muted">"Next" moves an exercise up to be the next one you do.</p>
+    ${X.map((we, i) => { const d = we.sets.filter(s => s.done).length, n = we.sets.length;
+      return `<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line)">
+        <span style="min-width:0;flex:1">${esc(exById(we.exId).name)}${we.group ? ` <span class="badge ss">SS ${esc(we.group)}</span>` : ''}
+          <span class="small muted">${d ? `${d}/${n} done` : ''}</span></span>
+        <span class="pill">
+          ${!d && i !== upNext ? `<button class="btn small" data-act="ro-next" data-i="${i}">Next</button>` : ''}
+          <button class="btn small" data-act="ro-up" data-i="${i}" ${i===0?'disabled':''}>↑</button>
+          <button class="btn small" data-act="ro-down" data-i="${i}" ${i===X.length-1?'disabled':''}>↓</button>
+        </span></div>`; }).join('')}`);
+}
 function closeModal(){ $('#modal-slot').innerHTML = ''; }
 let pickCb = null, pickFilter = '';
 function pickExercise(cb, title = 'Add exercise'){
@@ -824,6 +839,14 @@ document.addEventListener('click', e => {
     case 'add-ex': pickExercise(id => { W.exercises.push(newWorkoutEx(id)); save(); render(); }); break;
     case 'swap': pickExercise(id => { const old = we; const n = newWorkoutEx(id, {sets: old.sets.length, reps: old.reps, rir: old.rir, group: old.group, note:''}); W.exercises[+t.dataset.ex] = n; save(); render(); }, 'Swap for…'); break;
     case 'del-ex': if(!we.sets.some(s=>s.done) || confirm('Remove this exercise and its sets?')){ W.exercises.splice(+t.dataset.ex, 1); save(); render(); } break;
+    case 'reorder': reorderModal(); break;
+    case 'ro-up': case 'ro-down': case 'ro-next': {
+      const i = +t.dataset.i, X = W.exercises;
+      let j = a === 'ro-up' ? i - 1 : a === 'ro-down' ? i + 1 : X.findIndex(e => !e.sets.some(s => s.done));
+      if(a === 'ro-next' && j > i) j = i;
+      if(j < 0 || j >= X.length || j === i) break;
+      const [m] = X.splice(i, 1); X.splice(j, 0, m); save(); reorderModal(); render(); break;
+    }
     case 'move-up': { const i = +t.dataset.ex; if(i > 0){ [W.exercises[i-1], W.exercises[i]] = [W.exercises[i], W.exercises[i-1]]; save(); render(); } break; }
     case 'add-set': { const last = we.sets.filter(s=>s.type!=='w').slice(-1)[0]; we.sets.push({w:last?.w||'', r:'', rir:'', done:false, type:'n'}); save(); render(); break; }
     case 'add-warm': { const i = we.sets.findIndex(s => s.type !== 'w'); we.sets.splice(i < 0 ? we.sets.length : i, 0, {w:'', r:'', rir:'', done:false, type:'w'}); save(); render(); break; }

@@ -75,6 +75,8 @@ tr.done .check{background:var(--good);border-color:var(--good);color:#fff}
 .del{border:0;background:none;color:var(--muted);padding:4px}
 .hint{font-size:12px;margin-top:6px}
 .hint.up{color:var(--good)}
+input.txt.exnote{padding:6px 9px;font-size:13px;margin-bottom:6px}
+@media (max-width:700px){input.txt.exnote{font-size:16px}}
 textarea,input.txt,select{width:100%;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px}
 .timer{position:fixed;left:50%;transform:translateX(-50%);bottom:64px;background:var(--accent);color:#fff;border-radius:14px;padding:8px 10px;display:flex;align-items:center;gap:8px;box-shadow:0 6px 24px rgba(0,0,0,.35);z-index:20}
 .timer b{font-size:20px;min-width:62px;text-align:center;font-variant-numeric:tabular-nums}
@@ -455,7 +457,7 @@ function progressionHint(we){
   if(!sets.length) return '';
   const top = repTop(we.reps), low = repLow(we.reps);
   const w0 = Math.max(...sets.map(s => +s.w || 0));
-  if(top && sets.length >= Math.min(p.e.sets.filter(s=>s.type!=='w').length, we.sets.filter(s=>s.type!=='w').length) && sets.every(s => +s.r >= top))
+  if(top && sets.length >= we.sets.filter(s=>s.type!=='w').length && sets.every(s => +s.r >= top))
     return `<div class="hint up">↑ Last time you hit ${top}+ reps on every set. Add the smallest weight jump today.</div>`;
   if(low && sets.some(s => +s.r < low))
     return `<div class="hint muted">Last time some sets fell under ${low} reps. Keep ${fmtW(w0)} ${S.settings.unit} and build reps.</div>`;
@@ -512,6 +514,8 @@ function exCard(we, i){
       </div>
     </div>
     <div class="target">${esc(target)}${we.note ? ` · ${esc(we.note)}`:''}</div>
+    ${(() => { const lp = lastSession(we.exId, S.active.start); return lp && lp.e.myNote ? `<div class="small muted" style="margin:-4px 0 6px">Last note: ${esc(lp.e.myNote)}</div>` : ''; })()}
+    <input class="txt exnote" data-exnote="${i}" value="${esc(we.myNote || '')}" placeholder="My note (seat 4, elbow twinge, felt easy…)">
     <table class="sets">
       <thead><tr><th>Set</th><th>Previous</th><th>${S.settings.unit}</th><th>Reps</th><th>RIR</th><th></th><th></th></tr></thead>
       <tbody>${rows}</tbody>
@@ -628,7 +632,8 @@ function viewSession(id){
   <div class="card"><label class="small muted" style="font-weight:600">Session comment</label>
     <textarea data-session-notes="${w.id}" rows="3" placeholder="Sick? Injury or pain? Bad sleep, low energy, short on time? Anything your coach should know.">${esc(w.notes)}</textarea></div>
   ${(w.prs||[]).map(p => `<div><span class="badge pr">PR</span> ${esc(p)}</div>`).join('')}
-  ${w.exercises.map(e => `<div class="card"><div class="ex-title" data-open-ex="${e.exId}" style="cursor:pointer">${esc(exById(e.exId).name)}</div>
+  ${w.exercises.map((e, ei) => `<div class="card"><div class="ex-title" data-open-ex="${e.exId}" style="cursor:pointer">${esc(exById(e.exId).name)}</div>
+    <input class="txt exnote" data-session-exnote="${w.id}:${ei}" value="${esc(e.myNote || '')}" placeholder="My note for this exercise">
     <table class="sets"><thead><tr><th>Set</th><th>${S.settings.unit}</th><th>Reps</th><th>RIR</th><th>e1RM</th></tr></thead><tbody>
     ${(() => { let n = 0; return e.sets.map(s => `<tr><td class="${s.type==='w'?'muted':''}">${s.type==='w'?'W':++n}</td><td>${fmtW(s.w)}</td><td>${esc(s.r)}</td><td>${esc(s.rir)}</td><td class="muted">${s.type==='w'?'':(e1rm(+s.w,+s.r)||'').toString().slice(0,5)}</td></tr>`).join(''); })()}
     </tbody></table></div>`).join('')}`;
@@ -671,7 +676,7 @@ function viewExercise(id){
   <div class="card" style="padding:6px 12px">${repRows.map(w => `<div class="row between" style="padding:4px 0;border-bottom:1px solid var(--line)"><span>${fmtW(w)} ${S.settings.unit}</span><span><b>${repPR[w].r}</b> reps <span class="muted small">${new Date(repPR[w].t).toLocaleDateString()}</span></span></div>`).join('')}</div>
   <h2>History</h2>
   ${hist.map(h => `<div class="card"><div class="row between"><b>${esc(h.w.name)}</b><span class="muted small">${fmtDate(h.w.start)}</span></div>
-    <div class="small">${h.sets.map(s => `${fmtW(s.w)} × ${s.r}${s.rir!==''&&s.rir!=null?` @${s.rir}`:''}`).join(' · ')}</div></div>`).join('')}
+    <div class="small">${h.sets.map(s => `${fmtW(s.w)} × ${s.r}${s.rir!==''&&s.rir!=null?` @${s.rir}`:''}`).join(' · ')}</div>${h.e.myNote ? `<div class="small muted">📝 ${esc(h.e.myNote)}</div>` : ''}</div>`).join('')}
   ` : `<div class="empty">No sets logged yet for this exercise.</div>`}`;
 }
 function chart(pts){
@@ -889,6 +894,9 @@ document.addEventListener('input', e => {
   if(t.dataset.f){ const row = t.closest('tr[data-ex]'); S.active.exercises[+row.dataset.ex].sets[+row.dataset.set][t.dataset.f] = t.value.replace(',', '.'); save(); }
   else if(t.hasAttribute('data-wname')){ S.active.name = t.value; save(); }
   else if(t.hasAttribute('data-wnotes')){ S.active.notes = t.value; save(); }
+  else if(t.dataset.exnote !== undefined){ S.active.exercises[+t.dataset.exnote].myNote = t.value; save(); }
+  else if(t.dataset.sessionExnote){ const [wid, ei] = t.dataset.sessionExnote.split(':'); const w = S.workouts.find(x => x.id === wid);
+    if(w && w.exercises[+ei]){ w.exercises[+ei].myNote = t.value; w.updated = Date.now(); save(); } }
   else if(t.dataset.sessionNotes){ const w = S.workouts.find(x => x.id === t.dataset.sessionNotes); if(w){ w.notes = t.value; w.updated = Date.now(); save(); } }
   else if(t.hasAttribute('data-tplname')){ S.templates.find(x => x.id === view.id).name = t.value; save(); }
   else if(t.dataset.tf){ const tp = S.templates.find(x => x.id === view.id); const it = tp.items[+t.closest('[data-ti]').dataset.ti];
